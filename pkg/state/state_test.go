@@ -65,3 +65,9 @@ func TestDefaultDir(t *testing.T) {
 		t.Fatalf("defaultDir() for darwin should end in ssecat, got %q", d)
 	}
 }
+
+func TestSyncDir(t *testing.T) {
+	if err := syncDir(t.TempDir()); err != nil {
+		t.Fatalf("syncDir() error = %v", err)
+	}
+}
