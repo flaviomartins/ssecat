@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          COMMIT="${GITHUB_SHA::7}"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          LDFLAGS="-X github.com/flaviomartins/ssecat/pkg/version.Version=${VERSION} -X github.com/flaviomartins/ssecat/pkg/version.Commit=${COMMIT} -X github.com/flaviomartins/ssecat/pkg/version.Date=${DATE}"
+
+          mkdir -p dist
+
+          build_unix() {
+            local goos="$1"
+            local goarch="$2"
+            local name="ssecat-${goos}-${goarch}"
+            mkdir -p "dist/${name}"
+            GOOS="$goos" GOARCH="$goarch" go build -ldflags "$LDFLAGS" -o "dist/${name}/ssecat" ./cmd/ssecat
+            tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+            rm -rf "dist/${name}"
+          }
+
+          build_windows() {
+            local goarch="$1"
+            local name="ssecat-windows-${goarch}"
+            mkdir -p "dist/${name}"
+            GOOS=windows GOARCH="$goarch" go build -ldflags "$LDFLAGS" -o "dist/${name}/ssecat.exe" ./cmd/ssecat
+            (cd dist && zip -r "${name}.zip" "${name}")
+            rm -rf "dist/${name}"
+          }
+
+          build_unix linux amd64
+          build_unix linux arm64
+          build_unix darwin amd64
+          build_unix darwin arm64
+          build_windows amd64
+          build_windows arm64
+
+          (cd dist && sha256sum *.tar.gz *.zip > checksums.txt)
+
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
