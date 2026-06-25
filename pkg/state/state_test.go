@@ -78,7 +78,7 @@ func TestSyncDirNonExistent(t *testing.T) {
 	err := syncDir(filepath.Join(t.TempDir(), "missing"))
 	if runtime.GOOS == "windows" {
 		if err != nil {
-			t.Fatalf("syncDir() on windows error = %v", err)
+			t.Fatalf("syncDir() on Windows error = %v", err)
 		}
 		return
 	}
