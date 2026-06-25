@@ -167,6 +167,10 @@ func sanitizeComponent(input string) string {
 }
 
 func syncDir(dir string) error {
+	if runtime.GOOS == "windows" {
+		// Windows doesn't support syncing directory handles like Unix does.
+		return nil
+	}
 	d, err := os.Open(dir)
 	if err != nil {
 		return fmt.Errorf("open state directory %q: %w", dir, err)
