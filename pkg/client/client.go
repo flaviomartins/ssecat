@@ -188,7 +188,7 @@ func (c *Client) consume(body io.Reader, currentID *string) (error, string) {
 func isTemporary(err error) bool {
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return netErr.Timeout() || netErr.Temporary()
+		return netErr.Timeout()
 	}
 	return false
 }
