@@ -1,6 +1,8 @@
 package state
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -69,5 +71,21 @@ func TestDefaultDir(t *testing.T) {
 func TestSyncDir(t *testing.T) {
 	if err := syncDir(t.TempDir()); err != nil {
 		t.Fatalf("syncDir() error = %v", err)
+	}
+}
+
+func TestSyncDirNonExistent(t *testing.T) {
+	err := syncDir(filepath.Join(t.TempDir(), "missing"))
+	if runtime.GOOS == "windows" {
+		if err != nil {
+			t.Fatalf("syncDir() on windows error = %v", err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatal("syncDir() expected error for non-existent directory, got nil")
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("syncDir() error = %v, want os.ErrNotExist", err)
 	}
 }
