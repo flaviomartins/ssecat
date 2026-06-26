@@ -1,0 +1,14 @@
+# Build artifacts
+bin/
+dist/
+
+# Go test binaries and coverage
+*.test
+*.out
+coverage.out
+
+# Dependency directories (if used)
+vendor/
+
+# Editor/OS files
+.DS_Store
