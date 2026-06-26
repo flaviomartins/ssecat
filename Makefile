@@ -7,27 +7,27 @@ LDFLAGS=-X github.com/flaviomartins/ssecat/pkg/version.Version=$(shell git descr
 .PHONY: build test fmt vet lint clean release
 
 build:
-go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/ssecat
+	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/ssecat
 
 test:
-go test $(PKG)
+	go test $(PKG)
 
 fmt:
-gofmt -w $$(find . -name '*.go' -not -path './.git/*')
+	gofmt -w $$(find . -name '*.go' -not -path './.git/*')
 
 vet:
-go vet $(PKG)
+	go vet $(PKG)
 
 lint: fmt vet test
 
 clean:
-rm -rf bin dist
+	rm -rf bin dist
 
 release: clean
-mkdir -p dist
-GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64 ./cmd/ssecat
-GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-arm64 ./cmd/ssecat
-GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-amd64 ./cmd/ssecat
-GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64 ./cmd/ssecat
-GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe ./cmd/ssecat
-GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-arm64.exe ./cmd/ssecat
+	mkdir -p dist
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-amd64 ./cmd/ssecat
+	GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-linux-arm64 ./cmd/ssecat
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-amd64 ./cmd/ssecat
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-darwin-arm64 ./cmd/ssecat
+	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-amd64.exe ./cmd/ssecat
+	GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/$(BINARY)-windows-arm64.exe ./cmd/ssecat
