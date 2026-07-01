@@ -66,7 +66,7 @@ func run() error {
 	}
 
 	if *showVer {
-		fmt.Fprintln(os.Stdout, version.String())
+		fmt.Fprintf(os.Stdout, "ssecat %s\n", version.Version)
 		return nil
 	}
 
