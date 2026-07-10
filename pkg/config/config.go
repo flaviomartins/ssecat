@@ -34,7 +34,7 @@ func DefaultFileConfig() FileConfig {
 	return FileConfig{
 		Retry:      true,
 		RetryDelay: 3 * time.Second,
-		Resume:     true,
+		Resume:     false,
 		UserAgent:  "ssecat/0.1",
 		Accept:     "text/event-stream",
 	}
