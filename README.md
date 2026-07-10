@@ -18,9 +18,12 @@
 go install github.com/flaviomartins/ssecat/cmd/ssecat@latest
 ```
 
+Building from source requires Go 1.24 or newer.
+
 ### From release artifacts
 
 Download binaries from GitHub Releases and place `ssecat` in your `PATH`.
+Release binaries are built with the latest stable Go toolchain.
 
 ## Building
 
