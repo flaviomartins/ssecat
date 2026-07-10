@@ -90,7 +90,7 @@ Supported keys:
 ```ini
 retry=true
 retry-delay=2s
-resume=false
+continue=false
 user-agent=ssecat/0.1
 accept=text/event-stream
 ```
@@ -123,7 +123,7 @@ stream.wikimedia.org/
 - Transport and HTTP failures use exponential backoff with jitter and cap at 30 seconds.
 - Successful reconnect resets transport backoff.
 - Reconnect requests include `Last-Event-ID` when available.
-- Resume is disabled by default; enable with `--continue`/`-c` or `resume=true` in config.
+- Resume is disabled by default; enable with `--continue`/`-c` or `continue=true` in config.
 
 ## XDG directories
 

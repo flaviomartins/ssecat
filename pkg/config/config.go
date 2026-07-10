@@ -83,10 +83,10 @@ func Load(path string) (FileConfig, error) {
 				return cfg, fmt.Errorf("parse retry-delay on line %d: %w", lineNo, err)
 			}
 			cfg.RetryDelay = d
-		case "resume":
+		case "continue", "resume":
 			parsed, err := parseBool(value)
 			if err != nil {
-				return cfg, fmt.Errorf("parse resume on line %d: %w", lineNo, err)
+				return cfg, fmt.Errorf("parse %s on line %d: %w", key, lineNo, err)
 			}
 			cfg.Resume = parsed
 		case "user-agent":
