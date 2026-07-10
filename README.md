@@ -1,6 +1,6 @@
 # ssecat
 
-`ssecat` is a Unix command-line tool for Server-Sent Events (SSE), similar to how `curl` works for regular HTTP responses.
+`ssecat` is a command-line tool for Server-Sent Events (SSE), similar to how `curl` works for regular HTTP responses.
 
 ## Overview
 
@@ -9,6 +9,7 @@
 - Writes only event payload (`data`) to stdout by default.
 - Writes diagnostics and errors to stderr.
 - Supports automatic reconnect with Last-Event-ID resume.
+- Exits cleanly on `Ctrl-C` across macOS, Linux, and Windows.
 
 ## Installation
 
