@@ -8,7 +8,7 @@
 - Parses SSE according to the WHATWG EventSource format.
 - Writes only event payload (`data`) to stdout by default.
 - Writes diagnostics and errors to stderr.
-- Supports automatic reconnect with Last-Event-ID resume.
+- Supports automatic reconnect, with optional Last-Event-ID resume.
 - Exits cleanly on `Ctrl-C` across macOS, Linux, and Windows.
 
 ## Installation
@@ -48,7 +48,7 @@ Flags:
 
 - `--config`
 - `--state-dir`
-- `--no-resume`
+- `--continue`, `-c`
 - `--header` (repeatable, format: `Name: Value`)
 - `--version`
 - `--help`
@@ -90,7 +90,7 @@ Supported keys:
 ```ini
 retry=true
 retry-delay=2s
-resume=true
+continue=false
 user-agent=ssecat/0.1
 accept=text/event-stream
 ```
@@ -123,6 +123,7 @@ stream.wikimedia.org/
 - Transport and HTTP failures use exponential backoff with jitter and cap at 30 seconds.
 - Successful reconnect resets transport backoff.
 - Reconnect requests include `Last-Event-ID` when available.
+- Resume is disabled by default; enable with `--continue`/`-c` or `continue=true` in config.
 
 ## XDG directories
 

@@ -45,11 +45,12 @@ func run() error {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		configPath = fs.String("config", cfgPath, "path to config file")
-		stateDir   = fs.String("state-dir", "", "override state directory")
-		noResume   = fs.Bool("no-resume", false, "disable Last-Event-ID resume")
-		showVer    = fs.Bool("version", false, "show version")
-		headers    headerFlags
+		configPath    = fs.String("config", cfgPath, "path to config file")
+		stateDir      = fs.String("state-dir", "", "override state directory")
+		continueFlag  = fs.Bool("continue", false, "enable Last-Event-ID resume")
+		continueShort = fs.Bool("c", false, "enable Last-Event-ID resume")
+		showVer       = fs.Bool("version", false, "show version")
+		headers       headerFlags
 	)
 	fs.Var(&headers, "header", "extra request header in 'Name: Value' form (repeatable)")
 
@@ -90,7 +91,7 @@ func run() error {
 		retryDelay = 3 * time.Second
 	}
 
-	resume := fileCfg.Resume && !*noResume
+	resume := fileCfg.Resume || *continueFlag || *continueShort
 
 	hdr := http.Header{}
 	if fileCfg.Accept != "" {
