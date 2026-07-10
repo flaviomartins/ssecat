@@ -106,11 +106,23 @@ func (c *Client) Run(ctx context.Context) error {
 		}
 
 		attempt = 0
-		streamErr, updatedID := c.consume(resp.Body, &lastEventID)
-		resp.Body.Close()
+		done := make(chan struct{})
+		go func(body io.Closer) {
+			select {
+			case <-ctx.Done():
+				_ = body.Close()
+			case <-done:
+			}
+		}(resp.Body)
+		streamErr, updatedID := c.consume(ctx, resp.Body, &lastEventID)
+		close(done)
+		_ = resp.Body.Close()
 		lastEventID = updatedID
 		if streamErr != nil && !errors.Is(streamErr, io.EOF) {
-			if !c.retry || errors.Is(streamErr, context.Canceled) {
+			if errors.Is(streamErr, context.Canceled) {
+				return nil
+			}
+			if !c.retry {
 				return streamErr
 			}
 		}
@@ -154,12 +166,15 @@ func (c *Client) connect(ctx context.Context, lastEventID string) (*http.Respons
 	return resp, nil
 }
 
-func (c *Client) consume(body io.Reader, currentID *string) (error, string) {
+func (c *Client) consume(ctx context.Context, body io.Reader, currentID *string) (error, string) {
 	parser := sse.NewParser(body)
 	lastID := *currentID
 	for {
 		ev, err := parser.Next()
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err(), lastID
+			}
 			if errors.Is(err, io.EOF) {
 				return io.EOF, lastID
 			}
