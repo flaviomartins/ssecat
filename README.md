@@ -49,7 +49,6 @@ Flags:
 - `--config`
 - `--state-dir`
 - `--resume`
-- `--no-resume`
 - `--header` (repeatable, format: `Name: Value`)
 - `--version`
 - `--help`

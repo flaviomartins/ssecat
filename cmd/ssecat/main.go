@@ -48,7 +48,6 @@ func run() error {
 		configPath = fs.String("config", cfgPath, "path to config file")
 		stateDir   = fs.String("state-dir", "", "override state directory")
 		resumeFlag = fs.Bool("resume", false, "enable Last-Event-ID resume")
-		noResume   = fs.Bool("no-resume", false, "disable Last-Event-ID resume")
 		showVer    = fs.Bool("version", false, "show version")
 		headers    headerFlags
 	)
@@ -91,7 +90,7 @@ func run() error {
 		retryDelay = 3 * time.Second
 	}
 
-	resume := (fileCfg.Resume || *resumeFlag) && !*noResume
+	resume := fileCfg.Resume || *resumeFlag
 
 	hdr := http.Header{}
 	if fileCfg.Accept != "" {
