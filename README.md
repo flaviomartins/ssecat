@@ -48,7 +48,7 @@ Flags:
 
 - `--config`
 - `--state-dir`
-- `--resume`
+- `--continue`, `-c`
 - `--header` (repeatable, format: `Name: Value`)
 - `--version`
 - `--help`
@@ -123,7 +123,7 @@ stream.wikimedia.org/
 - Transport and HTTP failures use exponential backoff with jitter and cap at 30 seconds.
 - Successful reconnect resets transport backoff.
 - Reconnect requests include `Last-Event-ID` when available.
-- Resume is disabled by default; enable with `--resume` or `resume=true` in config.
+- Resume is disabled by default; enable with `--continue`/`-c` or `resume=true` in config.
 
 ## XDG directories
 
