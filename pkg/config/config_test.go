@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,7 +34,7 @@ func TestLoadParsesContinueOverride(t *testing.T) {
 	}
 }
 
-func TestLoadParsesLegacyResumeOverride(t *testing.T) {
+func TestLoadRejectsLegacyResumeKey(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -42,11 +43,11 @@ func TestLoadParsesLegacyResumeOverride(t *testing.T) {
 		t.Fatalf("write config file: %v", err)
 	}
 
-	cfg, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() error = nil, want unknown key error")
 	}
-	if !cfg.Resume {
-		t.Fatal("Load().Resume = false, want true")
+	if got, want := err.Error(), `unknown config key "resume"`; !strings.Contains(got, want) {
+		t.Fatalf("Load() error = %q, want to contain %q", got, want)
 	}
 }
