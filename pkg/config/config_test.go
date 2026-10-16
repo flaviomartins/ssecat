@@ -14,6 +14,9 @@ func TestDefaultFileConfigDisablesResume(t *testing.T) {
 	if cfg.Resume {
 		t.Fatal("DefaultFileConfig().Resume = true, want false")
 	}
+	if !cfg.HTTP3 {
+		t.Fatal("DefaultFileConfig().HTTP3 = false, want true")
+	}
 }
 
 func TestLoadParsesContinueOverride(t *testing.T) {
@@ -31,6 +34,42 @@ func TestLoadParsesContinueOverride(t *testing.T) {
 	}
 	if !cfg.Resume {
 		t.Fatal("Load().Resume = false, want true")
+	}
+}
+
+func TestLoadParsesHTTP3Preference(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".ssecatrc")
+	if err := os.WriteFile(path, []byte("http3=true\n"), 0o600); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.HTTP3 {
+		t.Fatal("Load().HTTP3 = false, want true")
+	}
+}
+
+func TestLoadCanDisableHTTP3Preference(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".ssecatrc")
+	if err := os.WriteFile(path, []byte("http3=false\n"), 0o600); err != nil {
+		t.Fatalf("write config file: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.HTTP3 {
+		t.Fatal("Load().HTTP3 = true, want false")
 	}
 }
 

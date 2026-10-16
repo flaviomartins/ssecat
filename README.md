@@ -4,7 +4,7 @@
 
 ## Overview
 
-- Streams SSE over HTTP/1.1 or HTTP/2 using Go's standard `net/http` stack.
+- Prefers HTTP/3 for HTTPS streams, falling back to HTTP/1.1 or HTTP/2 using Go's standard `net/http` stack.
 - Parses SSE according to the WHATWG EventSource format.
 - Writes only event payload (`data`) to stdout by default.
 - Writes diagnostics and errors to stderr.
@@ -50,6 +50,8 @@ Flags:
 - `--state-dir`
 - `--continue`, `-c`
 - `--header` (repeatable, format: `Name: Value`)
+- `--http3` (enable HTTP/3 preference)
+- `--no-http3` (disable HTTP/3 preference)
 - `--version`
 - `--help`
 
@@ -93,6 +95,7 @@ retry-delay=2s
 continue=false
 user-agent=ssecat/0.1
 accept=text/event-stream
+http3=true
 ```
 
 ## State directory
@@ -124,6 +127,23 @@ stream.wikimedia.org/
 - Successful reconnect resets transport backoff.
 - Reconnect requests include `Last-Event-ID` when available.
 - Resume is disabled by default; enable with `--continue`/`-c` or `continue=true` in config.
+
+## HTTP/3
+
+For `https://` URLs, `ssecat` tries HTTP/3 first by default, using the
+[`quic-go`](https://github.com/quic-go/quic-go) transport. It falls back to the
+standard HTTP/1.1 or HTTP/2 transport if the HTTP/3 request fails before a
+response is received. Disable HTTP/3 with `--no-http3` or `http3=false` in the
+config file; `--http3` enables it if the config disables it.
+HTTP error status codes are not retried over another protocol. If an established
+stream later disconnects, the existing reconnect behavior applies; an active
+stream is not migrated between protocols.
+
+HTTP/3 requires QUIC traffic to reach the server, usually over UDP port 443.
+When UDP/QUIC is blocked or the server does not support HTTP/3, fallback may
+add connection delay before the stream starts. If the configured HTTP transport
+uses a proxy, HTTP/3 is skipped because the QUIC transport does not use that
+proxy.
 
 ## XDG directories
 

@@ -50,6 +50,8 @@ func run() error {
 		continueFlag  = fs.Bool("continue", false, "enable Last-Event-ID resume")
 		continueShort = fs.Bool("c", false, "enable Last-Event-ID resume")
 		showVer       = fs.Bool("version", false, "show version")
+		http3Flag     = fs.Bool("http3", false, "prefer HTTP/3, falling back to HTTP/1.1 or HTTP/2")
+		noHTTP3Flag   = fs.Bool("no-http3", false, "disable HTTP/3 preference")
 		headers       headerFlags
 	)
 	fs.Var(&headers, "header", "extra request header in 'Name: Value' form (repeatable)")
@@ -92,6 +94,7 @@ func run() error {
 	}
 
 	resume := fileCfg.Resume || *continueFlag || *continueShort
+	preferHTTP3 := (fileCfg.HTTP3 || *http3Flag) && !*noHTTP3Flag
 
 	hdr := http.Header{}
 	if fileCfg.Accept != "" {
@@ -132,6 +135,7 @@ func run() error {
 		State:        st,
 		Retry:        fileCfg.Retry,
 		InitialRetry: retryDelay,
+		PreferHTTP3:  preferHTTP3,
 	})
 
 	ctx, stop := signalContext(context.Background())

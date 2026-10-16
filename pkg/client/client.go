@@ -14,6 +14,7 @@ import (
 	"github.com/flaviomartins/ssecat/pkg/output"
 	"github.com/flaviomartins/ssecat/pkg/sse"
 	"github.com/flaviomartins/ssecat/pkg/state"
+	"github.com/quic-go/quic-go/http3"
 )
 
 const maxBackoff = 30 * time.Second
@@ -27,6 +28,7 @@ type Options struct {
 	State        *state.Store
 	Retry        bool
 	InitialRetry time.Duration
+	PreferHTTP3  bool
 }
 
 // Client receives and emits SSE streams.
@@ -55,6 +57,22 @@ func New(opts Options) *Client {
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = &http.Client{Timeout: 60 * time.Second}
 	}
+	if opts.PreferHTTP3 {
+		httpClient := *opts.HTTPClient
+		fallback := httpClient.Transport
+		if fallback == nil {
+			fallback = http.DefaultTransport
+		}
+		http3Transport := &http3.Transport{}
+		if standardTransport, ok := fallback.(*http.Transport); ok && standardTransport.TLSClientConfig != nil {
+			http3Transport.TLSClientConfig = standardTransport.TLSClientConfig.Clone()
+		}
+		httpClient.Transport = &http3FallbackTransport{
+			http3:    http3Transport,
+			fallback: fallback,
+		}
+		opts.HTTPClient = &httpClient
+	}
 	return &Client{
 		url:        opts.URL,
 		httpClient: opts.HTTPClient,
@@ -65,6 +83,62 @@ func New(opts Options) *Client {
 		retryDelay: opts.InitialRetry,
 		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
+}
+
+type http3FallbackTransport struct {
+	http3    http.RoundTripper
+	fallback http.RoundTripper
+}
+
+func (t *http3FallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !t.canUseHTTP3(req) {
+		return t.fallback.RoundTrip(req)
+	}
+
+	http3Req := req.Clone(req.Context())
+	if req.Body != nil && req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("recreate request body for HTTP/3: %w", err)
+		}
+		http3Req.Body = body
+	}
+	resp, http3Err := t.http3.RoundTrip(http3Req)
+	if http3Err == nil || req.Context().Err() != nil {
+		return resp, http3Err
+	}
+	if req.Body != nil && req.GetBody == nil {
+		return nil, http3Err
+	}
+
+	fallbackReq := req.Clone(req.Context())
+	if req.Body != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("recreate request body for HTTP fallback: %w", err)
+		}
+		fallbackReq.Body = body
+	}
+	fallbackResp, fallbackErr := t.fallback.RoundTrip(fallbackReq)
+	if fallbackErr != nil {
+		return nil, errors.Join(
+			fmt.Errorf("HTTP/3 request: %w", http3Err),
+			fmt.Errorf("HTTP fallback request: %w", fallbackErr),
+		)
+	}
+	return fallbackResp, nil
+}
+
+func (t *http3FallbackTransport) canUseHTTP3(req *http.Request) bool {
+	if req.URL.Scheme != "https" {
+		return false
+	}
+	standardTransport, ok := t.fallback.(*http.Transport)
+	if !ok || standardTransport.Proxy == nil {
+		return true
+	}
+	proxyURL, err := standardTransport.Proxy(req)
+	return err == nil && proxyURL == nil
 }
 
 // Run starts the stream receive loop.
