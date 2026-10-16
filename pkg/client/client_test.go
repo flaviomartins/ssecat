@@ -2,14 +2,139 @@ package client
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flaviomartins/ssecat/pkg/output"
 )
+
+func TestHTTP3FallbackTransportFallsBackOnRequestError(t *testing.T) {
+	t.Parallel()
+
+	http3Err := errors.New("HTTP/3 unavailable")
+	http3Calls, fallbackCalls := 0, 0
+	transport := &http3FallbackTransport{
+		http3: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			http3Calls++
+			return nil, http3Err
+		}),
+		fallback: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			fallbackCalls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}),
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://example.test/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip() error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if http3Calls != 1 || fallbackCalls != 1 {
+		t.Fatalf("transport calls: HTTP/3 = %d, fallback = %d; want 1 each", http3Calls, fallbackCalls)
+	}
+}
+
+func TestHTTP3FallbackTransportDoesNotFallbackOnHTTPStatus(t *testing.T) {
+	t.Parallel()
+
+	fallbackCalls := 0
+	transport := &http3FallbackTransport{
+		http3: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusServiceUnavailable,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}),
+		fallback: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			fallbackCalls++
+			return nil, errors.New("unexpected fallback")
+		}),
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://example.test/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip() error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if fallbackCalls != 0 {
+		t.Fatalf("fallback called %d times, want 0", fallbackCalls)
+	}
+}
+
+func TestHTTP3FallbackTransportSkipsHTTP3ForHTTPURL(t *testing.T) {
+	t.Parallel()
+
+	http3Calls, fallbackCalls := 0, 0
+	transport := &http3FallbackTransport{
+		http3: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			http3Calls++
+			return nil, errors.New("unexpected HTTP/3 request")
+		}),
+		fallback: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			fallbackCalls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader("")),
+				Request:    req,
+			}, nil
+		}),
+	}
+	req, err := http.NewRequest(http.MethodGet, "http://example.test/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+
+	resp, err := transport.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("RoundTrip() error = %v", err)
+	}
+	_ = resp.Body.Close()
+	if http3Calls != 0 || fallbackCalls != 1 {
+		t.Fatalf("transport calls: HTTP/3 = %d, fallback = %d; want 0 and 1", http3Calls, fallbackCalls)
+	}
+}
+
+func TestHTTP3FallbackTransportSkipsHTTP3WhenProxyIsConfigured(t *testing.T) {
+	t.Parallel()
+
+	proxyURL := &url.URL{Scheme: "http", Host: "proxy.example.test"}
+	transport := &http3FallbackTransport{
+		http3: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("unexpected HTTP/3 request")
+		}),
+		fallback: &http.Transport{
+			Proxy: func(*http.Request) (*url.URL, error) {
+				return proxyURL, nil
+			},
+		},
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://example.test/stream", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	if transport.canUseHTTP3(req) {
+		t.Fatal("canUseHTTP3() = true, want false")
+	}
+}
 
 func TestRunExitsOnContextCancelWhileStreaming(t *testing.T) {
 	t.Parallel()

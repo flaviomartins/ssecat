@@ -16,6 +16,7 @@ type FileConfig struct {
 	Retry      bool
 	RetryDelay time.Duration
 	Resume     bool
+	HTTP3      bool
 	UserAgent  string
 	Accept     string
 }
@@ -35,6 +36,7 @@ func DefaultFileConfig() FileConfig {
 		Retry:      true,
 		RetryDelay: 3 * time.Second,
 		Resume:     false,
+		HTTP3:      true,
 		UserAgent:  "ssecat/0.1",
 		Accept:     "text/event-stream",
 	}
@@ -89,6 +91,12 @@ func Load(path string) (FileConfig, error) {
 				return cfg, fmt.Errorf("parse continue on line %d: %w", lineNo, err)
 			}
 			cfg.Resume = parsed
+		case "http3":
+			parsed, err := parseBool(value)
+			if err != nil {
+				return cfg, fmt.Errorf("parse http3 on line %d: %w", lineNo, err)
+			}
+			cfg.HTTP3 = parsed
 		case "user-agent":
 			cfg.UserAgent = value
 		case "accept":
