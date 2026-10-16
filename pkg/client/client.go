@@ -201,8 +201,7 @@ func (c *Client) consume(ctx context.Context, body io.Reader, currentID *string)
 }
 
 func isTemporary(err error) bool {
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if netErr, ok := errors.AsType[net.Error](err); ok {
 		return netErr.Timeout()
 	}
 	return false
@@ -210,10 +209,7 @@ func isTemporary(err error) bool {
 
 func (c *Client) backoffDuration(attempt int) time.Duration {
 	exponent := math.Pow(2, float64(attempt))
-	d := time.Duration(float64(c.retryDelay) * exponent)
-	if d > maxBackoff {
-		d = maxBackoff
-	}
+	d := min(time.Duration(float64(c.retryDelay)*exponent), maxBackoff)
 	return c.jitter(d)
 }
 
