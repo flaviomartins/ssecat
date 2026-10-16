@@ -123,7 +123,7 @@ stream.wikimedia.org/
 
 - Initial retry delay is 3 seconds by default.
 - `retry:` fields from the server update reconnect delay.
-- Transport and HTTP failures use exponential backoff with jitter and cap at 30 seconds.
+- Transport failures and retryable HTTP statuses use exponential backoff with jitter and cap at 30 seconds. Permanent 4xx responses (including 404) fail immediately; 408 and 429 are retried. For 429 responses, `Retry-After` is honored when present (delay-seconds or HTTP-date), and the wait is reported to stderr.
 - Successful reconnect resets transport backoff.
 - Reconnect requests include `Last-Event-ID` when available.
 - Resume is disabled by default; enable with `--continue`/`-c` or `continue=true` in config.

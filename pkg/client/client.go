@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/flaviomartins/ssecat/pkg/output"
@@ -25,6 +26,7 @@ type Options struct {
 	HTTPClient   *http.Client
 	Headers      http.Header
 	Writer       output.Writer
+	StatusWriter io.Writer
 	State        *state.Store
 	Retry        bool
 	InitialRetry time.Duration
@@ -37,6 +39,7 @@ type Client struct {
 	httpClient *http.Client
 	headers    http.Header
 	writer     output.Writer
+	status     io.Writer
 	state      *state.Store
 	retry      bool
 	retryDelay time.Duration
@@ -78,6 +81,7 @@ func New(opts Options) *Client {
 		httpClient: opts.HTTPClient,
 		headers:    h,
 		writer:     opts.Writer,
+		status:     opts.StatusWriter,
 		state:      opts.State,
 		retry:      opts.Retry,
 		retryDelay: opts.InitialRetry,
@@ -169,10 +173,22 @@ func (c *Client) Run(ctx context.Context) error {
 
 		resp, err := c.connect(ctx, lastEventID)
 		if err != nil {
-			if !c.retry {
+			statusErr, isHTTPStatusError := errors.AsType[*httpStatusError](err)
+			if !c.retry || (isHTTPStatusError && !statusErr.retryable()) {
 				return err
 			}
-			if err := c.wait(ctx, c.backoffDuration(attempt)); err != nil {
+			delay := c.backoffDuration(attempt)
+			if isHTTPStatusError && statusErr.code == http.StatusTooManyRequests {
+				if statusErr.retryAfterSet {
+					delay = statusErr.retryAfter
+				}
+				if c.status != nil {
+					if _, writeErr := fmt.Fprintf(c.status, "ssecat: rate limited (HTTP 429); retrying in %s\n", delay); writeErr != nil {
+						return fmt.Errorf("write rate-limit notice: %w", writeErr)
+					}
+				}
+			}
+			if err := c.wait(ctx, delay); err != nil {
 				return nil
 			}
 			attempt++
@@ -235,9 +251,65 @@ func (c *Client) connect(ctx context.Context, lastEventID string) (*http.Respons
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
-		return nil, fmt.Errorf("unexpected HTTP status: %s", resp.Status)
+		retryAfter, retryAfterSet := time.Duration(0), false
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfter, retryAfterSet = parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+		}
+		return nil, &httpStatusError{
+			code:          resp.StatusCode,
+			status:        resp.Status,
+			retryAfter:    retryAfter,
+			retryAfterSet: retryAfterSet,
+		}
 	}
 	return resp, nil
+}
+
+type httpStatusError struct {
+	code          int
+	status        string
+	retryAfter    time.Duration
+	retryAfterSet bool
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("unexpected HTTP status: %s", e.status)
+}
+
+func (e *httpStatusError) retryable() bool {
+	return e.code == http.StatusRequestTimeout ||
+		e.code == http.StatusTooManyRequests ||
+		e.code >= 500
+}
+
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	delaySeconds := true
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			delaySeconds = false
+			break
+		}
+	}
+	if delaySeconds {
+		delay, err := time.ParseDuration(value + "s")
+		if err != nil {
+			return 0, false
+		}
+		return delay, true
+	}
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	delay := retryAt.Sub(now)
+	if delay < 0 {
+		return 0, true
+	}
+	return delay, true
 }
 
 func (c *Client) consume(ctx context.Context, body io.Reader, currentID *string) (error, string) {
