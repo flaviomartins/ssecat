@@ -1,6 +1,7 @@
 package client
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"github.com/flaviomartins/ssecat/pkg/output"
 	"github.com/flaviomartins/ssecat/pkg/sse"
 	"github.com/flaviomartins/ssecat/pkg/state"
+	"github.com/klauspost/compress/zstd"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -232,15 +234,21 @@ func (c *Client) Run(ctx context.Context) error {
 			case <-done:
 			}
 		}(resp.Body)
-		var body io.Reader = resp.Body
+		var source io.ReadCloser = resp.Body
+		var idleBody *idleBody
 		if c.idle > 0 {
-			ib := newIdleBody(resp.Body, c.idle)
-			defer ib.stop()
-			body = ib
+			idleBody = newIdleBody(resp.Body, c.idle)
+			source = idleBody
 		}
-		streamErr, updatedID := c.consume(ctx, body, &lastEventID)
+		decodedBody, err := decodeResponseBody(source, resp.Header.Get("Content-Encoding"))
+		if err != nil {
+			close(done)
+			_ = source.Close()
+			return fmt.Errorf("decode response body: %w", err)
+		}
+		streamErr, updatedID := c.consume(ctx, decodedBody, &lastEventID)
 		close(done)
-		_ = resp.Body.Close()
+		_ = decodedBody.Close()
 		lastEventID = updatedID
 		if streamErr != nil && !errors.Is(streamErr, io.EOF) {
 			if errors.Is(streamErr, context.Canceled) {
@@ -277,6 +285,9 @@ func (c *Client) connect(ctx context.Context, lastEventID string) (*http.Respons
 	}
 	if lastEventID != "" {
 		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+	if req.Header.Get("Accept-Encoding") == "" {
+		req.Header.Set("Accept-Encoding", "gzip, zstd")
 	}
 
 	// The HTTP/3 transport has no ResponseHeaderTimeout, so guard the wait here.
@@ -367,6 +378,61 @@ func (c *cancelOnClose) Close() error {
 	return err
 }
 
+type decodedBody struct {
+	io.Reader
+	closers []io.Closer
+}
+
+func (b *decodedBody) Close() error {
+	var closeErr error
+	for i := len(b.closers) - 1; i >= 0; i-- {
+		closeErr = errors.Join(closeErr, b.closers[i].Close())
+	}
+	return closeErr
+}
+
+func decodeResponseBody(source io.ReadCloser, contentEncoding string) (*decodedBody, error) {
+	body := &decodedBody{
+		Reader:  source,
+		closers: []io.Closer{source},
+	}
+	encodings := strings.Split(contentEncoding, ",")
+	for i := len(encodings) - 1; i >= 0; i-- {
+		encoding := strings.ToLower(strings.TrimSpace(encodings[i]))
+		switch encoding {
+		case "", "identity":
+			continue
+		case "gzip":
+			reader, err := gzip.NewReader(body.Reader)
+			if err != nil {
+				_ = body.Close()
+				return nil, fmt.Errorf("decode gzip: %w", err)
+			}
+			body.Reader = reader
+			body.closers = append(body.closers, reader)
+		case "zstd":
+			reader, err := zstd.NewReader(body.Reader)
+			if err != nil {
+				_ = body.Close()
+				return nil, fmt.Errorf("decode zstd: %w", err)
+			}
+			body.Reader = reader
+			body.closers = append(body.closers, closeFunc(func() error {
+				reader.Close()
+				return nil
+			}))
+		default:
+			_ = body.Close()
+			return nil, fmt.Errorf("unsupported content encoding %q", encoding)
+		}
+	}
+	return body, nil
+}
+
+type closeFunc func() error
+
+func (f closeFunc) Close() error { return f() }
+
 // idleBody closes the underlying body when no bytes arrive within d.
 type idleBody struct {
 	rc    io.ReadCloser
@@ -393,6 +459,11 @@ func (b *idleBody) Read(p []byte) (int, error) {
 		return n, ErrIdleTimeout
 	}
 	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.stop()
+	return b.rc.Close()
 }
 
 func (b *idleBody) stop() { b.timer.Stop() }

@@ -1,6 +1,8 @@
 package client
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/flaviomartins/ssecat/pkg/output"
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestHTTP3FallbackTransportFallsBackOnRequestError(t *testing.T) {
@@ -413,6 +416,51 @@ func TestNewHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestRunDecodesCompressedStreams(t *testing.T) {
+	t.Parallel()
+
+	for _, encoding := range []string{"zstd", "gzip"} {
+		t.Run(encoding, func(t *testing.T) {
+			var compressed bytes.Buffer
+			var writer io.WriteCloser
+			if encoding == "zstd" {
+				var err error
+				writer, err = zstd.NewWriter(&compressed)
+				if err != nil {
+					t.Fatalf("create compressor: %v", err)
+				}
+			} else {
+				writer = gzip.NewWriter(&compressed)
+			}
+			if _, err := io.WriteString(writer, "data: compressed event\n\n"); err != nil {
+				t.Fatalf("write compressed event: %v", err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatalf("close compressor: %v", err)
+			}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.Header.Get("Accept-Encoding"); got != "gzip, zstd" {
+					t.Errorf("Accept-Encoding = %q, want %q", got, "gzip, zstd")
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set("Content-Encoding", encoding)
+				_, _ = w.Write(compressed.Bytes())
+			}))
+			defer srv.Close()
+
+			out := &syncBuf{}
+			c := New(Options{URL: srv.URL, Writer: output.NewPayloadWriter(out)})
+			if err := c.Run(context.Background()); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if got := out.String(); got != "compressed event\n" {
+				t.Fatalf("output = %q, want %q", got, "compressed event\n")
+			}
+		})
+	}
+}
+
 func TestLongStreamWithKeepaliveSurvivesIdleTimeout(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -501,5 +549,101 @@ func TestZeroIdleTimeoutDisables(t *testing.T) {
 	}
 	if got := out.String(); got != "a\nb\n" {
 		t.Fatalf("output = %q", got)
+	}
+}
+
+// ackWriter records each payload as ssecat writes it and releases the server
+// to send the next event.
+type ackWriter struct {
+	got chan string
+	ack chan<- struct{}
+}
+
+func (w ackWriter) Write(p []byte) (int, error) {
+	w.got <- string(p)
+	w.ack <- struct{}{}
+	return len(p), nil
+}
+
+type flushWriteCloser interface {
+	io.WriteCloser
+	Flush() error
+}
+
+func newFlushCompressor(t *testing.T, encoding string, w io.Writer) flushWriteCloser {
+	t.Helper()
+	switch encoding {
+	case "gzip":
+		return gzip.NewWriter(w)
+	case "zstd":
+		zw, err := zstd.NewWriter(w)
+		if err != nil {
+			t.Errorf("create zstd writer: %v", err)
+			return nil
+		}
+		return zw
+	}
+	t.Errorf("unsupported encoding %q", encoding)
+	return nil
+}
+
+// assertIncremental streams events through opts.URL, requiring each one to be
+// emitted before the server sends the next, so buffered decoding would time out.
+func assertIncremental(t *testing.T, opts Options, events int, ack chan<- struct{}) {
+	t.Helper()
+	got := make(chan string, events)
+	opts.Writer = output.NewPayloadWriter(ackWriter{got: got, ack: ack})
+	c := New(opts)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.Run(ctx) }()
+
+	for i := range events {
+		select {
+		case line := <-got:
+			if want := fmt.Sprintf("event-%d\n", i); line != want {
+				t.Fatalf("event %d = %q, want %q", i, line, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("event %d was not emitted before the next was sent", i)
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+}
+
+func TestRunEmitsCompressedEventsIncrementally(t *testing.T) {
+	t.Parallel()
+
+	for _, encoding := range []string{"gzip", "zstd"} {
+		t.Run(encoding, func(t *testing.T) {
+			t.Parallel()
+			const events = 3
+			ack := make(chan struct{}, events)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set("Content-Encoding", encoding)
+				cw := newFlushCompressor(t, encoding, w)
+				if cw == nil {
+					return
+				}
+				for i := range events {
+					fmt.Fprintf(cw, "data: event-%d\n\n", i)
+					_ = cw.Flush()
+					w.(http.Flusher).Flush()
+					select {
+					case <-ack:
+					case <-time.After(5 * time.Second):
+						return
+					}
+				}
+				_ = cw.Close()
+			}))
+			defer srv.Close()
+
+			assertIncremental(t, Options{URL: srv.URL}, events, ack)
+		})
 	}
 }
