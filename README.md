@@ -52,6 +52,7 @@ Flags:
 - `--header` (repeatable, format: `Name: Value`)
 - `--http3` (enable HTTP/3 preference)
 - `--no-http3` (disable HTTP/3 preference)
+- `--idle-timeout` (Go duration; reconnect if no bytes arrive for this long; `0` disables; default `60s`)
 - `--version`
 - `--help`
 
@@ -96,6 +97,7 @@ continue=false
 user-agent=ssecat/0.1
 accept=text/event-stream
 http3=true
+idle-timeout=60s
 ```
 
 ## State directory
@@ -126,6 +128,9 @@ stream.wikimedia.org/
 - Transport failures and retryable HTTP statuses use exponential backoff with jitter and cap at 30 seconds. Permanent 4xx responses (including 404) fail immediately; 408 and 429 are retried. For 429 responses, `Retry-After` is honored when present (delay-seconds or HTTP-date), and the wait is reported to stderr.
 - Successful reconnect resets transport backoff.
 - Reconnect requests include `Last-Event-ID` when available.
+- There is no whole-request timeout. A stream that is receiving data is never cut.
+- If no bytes arrive for the idle timeout (default 60s, `--idle-timeout` or `idle-timeout=` in config, `0` disables), the connection is dropped and, with retry enabled, reconnected. With retry disabled ssecat exits with an error. SSE comment lines such as `: keepalive` count as activity.
+- A server that does not send response headers within 30s is treated as a connection failure.
 - Resume is disabled by default; enable with `--continue`/`-c` or `continue=true` in config.
 
 ## HTTP/3

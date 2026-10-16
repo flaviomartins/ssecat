@@ -3,11 +3,14 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -379,4 +382,124 @@ func (b *blockingReadCloser) Close() error {
 	}
 	close(b.wait)
 	return nil
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestNewHTTPClientHasNoWholeRequestTimeout(t *testing.T) {
+	t.Parallel()
+	c := NewHTTPClient()
+	if c.Timeout != 0 {
+		t.Fatalf("Timeout = %v, want 0", c.Timeout)
+	}
+	tr, ok := c.Transport.(*http.Transport)
+	if !ok || tr.ResponseHeaderTimeout != DefaultResponseHeaderTimeout {
+		t.Fatalf("transport = %#v, want ResponseHeaderTimeout %v", c.Transport, DefaultResponseHeaderTimeout)
+	}
+}
+
+func TestLongStreamWithKeepaliveSurvivesIdleTimeout(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fl := w.(http.Flusher)
+		for i := range 8 {
+			if i%2 == 0 {
+				fmt.Fprintf(w, "data: e%d\n\n", i)
+			} else {
+				fmt.Fprint(w, ": keepalive\n\n")
+			}
+			fl.Flush()
+			time.Sleep(100 * time.Millisecond)
+		}
+	}))
+	defer srv.Close()
+
+	out := &syncBuf{}
+	c := New(Options{URL: srv.URL, Writer: output.NewPayloadWriter(out), IdleTimeout: 300 * time.Millisecond})
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := out.String(); got != "e0\ne2\ne4\ne6\n" {
+		t.Fatalf("output = %q", got)
+	}
+}
+
+func idleServer(conns *atomic.Int32) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conns.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: hello\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+}
+
+func TestIdleTimeoutReconnects(t *testing.T) {
+	t.Parallel()
+	var conns atomic.Int32
+	srv := idleServer(&conns)
+	defer srv.Close()
+
+	out := &syncBuf{}
+	c := New(Options{
+		URL: srv.URL, Writer: output.NewPayloadWriter(out), Retry: true,
+		InitialRetry: 10 * time.Millisecond, IdleTimeout: 100 * time.Millisecond,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	if err := c.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if conns.Load() < 2 || strings.Count(out.String(), "hello") < 2 {
+		t.Fatalf("conns = %d, output = %q; want reconnects", conns.Load(), out.String())
+	}
+}
+
+func TestIdleTimeoutErrorsWhenRetryDisabled(t *testing.T) {
+	t.Parallel()
+	var conns atomic.Int32
+	srv := idleServer(&conns)
+	defer srv.Close()
+
+	c := New(Options{URL: srv.URL, Writer: output.NewPayloadWriter(io.Discard), IdleTimeout: 100 * time.Millisecond})
+	err := c.Run(context.Background())
+	if !errors.Is(err, ErrIdleTimeout) {
+		t.Fatalf("Run() error = %v, want ErrIdleTimeout", err)
+	}
+}
+
+func TestZeroIdleTimeoutDisables(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "data: a\n\n")
+		w.(http.Flusher).Flush()
+		time.Sleep(400 * time.Millisecond)
+		fmt.Fprint(w, "data: b\n\n")
+	}))
+	defer srv.Close()
+
+	out := &syncBuf{}
+	c := New(Options{URL: srv.URL, Writer: output.NewPayloadWriter(out)})
+	if err := c.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := out.String(); got != "a\nb\n" {
+		t.Fatalf("output = %q", got)
+	}
 }

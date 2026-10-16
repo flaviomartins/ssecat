@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/flaviomartins/ssecat/pkg/output"
@@ -18,7 +19,30 @@ import (
 	"github.com/quic-go/quic-go/http3"
 )
 
-const maxBackoff = 30 * time.Second
+const (
+	maxBackoff = 30 * time.Second
+	// DefaultResponseHeaderTimeout bounds the wait for response headers.
+	DefaultResponseHeaderTimeout = 30 * time.Second
+)
+
+// ErrIdleTimeout is returned when no bytes arrive on the stream within the idle timeout.
+var ErrIdleTimeout = errors.New("stream idle timeout")
+
+var errHeaderTimeout = errors.New("timed out waiting for response headers")
+
+// NewHTTPClient returns an HTTP client without a whole-request timeout, so
+// long-lived streams are not cut. Servers that never reply still fail via
+// ResponseHeaderTimeout.
+func NewHTTPClient() *http.Client {
+	var transport *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	} else {
+		transport = &http.Transport{Proxy: http.ProxyFromEnvironment}
+	}
+	transport.ResponseHeaderTimeout = DefaultResponseHeaderTimeout
+	return &http.Client{Transport: transport}
+}
 
 // Options configures a Client.
 type Options struct {
@@ -31,6 +55,8 @@ type Options struct {
 	Retry        bool
 	InitialRetry time.Duration
 	PreferHTTP3  bool
+	// IdleTimeout fails the stream when no bytes arrive for this long. Zero disables it.
+	IdleTimeout time.Duration
 }
 
 // Client receives and emits SSE streams.
@@ -43,6 +69,7 @@ type Client struct {
 	state      *state.Store
 	retry      bool
 	retryDelay time.Duration
+	idle       time.Duration
 	rand       *rand.Rand
 }
 
@@ -58,7 +85,7 @@ func New(opts Options) *Client {
 		opts.InitialRetry = 3 * time.Second
 	}
 	if opts.HTTPClient == nil {
-		opts.HTTPClient = &http.Client{Timeout: 60 * time.Second}
+		opts.HTTPClient = NewHTTPClient()
 	}
 	if opts.PreferHTTP3 {
 		httpClient := *opts.HTTPClient
@@ -85,6 +112,7 @@ func New(opts Options) *Client {
 		state:      opts.State,
 		retry:      opts.Retry,
 		retryDelay: opts.InitialRetry,
+		idle:       opts.IdleTimeout,
 		rand:       rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
@@ -204,7 +232,13 @@ func (c *Client) Run(ctx context.Context) error {
 			case <-done:
 			}
 		}(resp.Body)
-		streamErr, updatedID := c.consume(ctx, resp.Body, &lastEventID)
+		var body io.Reader = resp.Body
+		if c.idle > 0 {
+			ib := newIdleBody(resp.Body, c.idle)
+			defer ib.stop()
+			body = ib
+		}
+		streamErr, updatedID := c.consume(ctx, body, &lastEventID)
 		close(done)
 		_ = resp.Body.Close()
 		lastEventID = updatedID
@@ -245,10 +279,20 @@ func (c *Client) connect(ctx context.Context, lastEventID string) (*http.Respons
 		req.Header.Set("Last-Event-ID", lastEventID)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	// The HTTP/3 transport has no ResponseHeaderTimeout, so guard the wait here.
+	reqCtx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(DefaultResponseHeaderTimeout, func() { cancel(errHeaderTimeout) })
+	resp, err := c.httpClient.Do(req.WithContext(reqCtx))
+	timer.Stop()
 	if err != nil {
+		cause := context.Cause(reqCtx)
+		cancel(nil)
+		if errors.Is(cause, errHeaderTimeout) {
+			return nil, fmt.Errorf("request stream: %w", errHeaderTimeout)
+		}
 		return nil, fmt.Errorf("request stream: %w", err)
 	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: func() { cancel(nil) }}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		retryAfter, retryAfterSet := time.Duration(0), false
@@ -311,6 +355,47 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	}
 	return delay, true
 }
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel func()
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
+
+// idleBody closes the underlying body when no bytes arrive within d.
+type idleBody struct {
+	rc    io.ReadCloser
+	d     time.Duration
+	timer *time.Timer
+	fired atomic.Bool
+}
+
+func newIdleBody(rc io.ReadCloser, d time.Duration) *idleBody {
+	b := &idleBody{rc: rc, d: d}
+	b.timer = time.AfterFunc(d, func() {
+		b.fired.Store(true)
+		_ = rc.Close()
+	})
+	return b
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	n, err := b.rc.Read(p)
+	if n > 0 && !b.fired.Load() {
+		b.timer.Reset(b.d)
+	}
+	if err != nil && b.fired.Load() {
+		return n, ErrIdleTimeout
+	}
+	return n, err
+}
+
+func (b *idleBody) stop() { b.timer.Stop() }
 
 func (c *Client) consume(ctx context.Context, body io.Reader, currentID *string) (error, string) {
 	parser := sse.NewParser(body)
