@@ -5,6 +5,7 @@
 ## Overview
 
 - Prefers HTTP/3 for HTTPS streams, falling back to HTTP/1.1 or HTTP/2 using Go's standard `net/http` stack.
+- Requests gzip and Zstandard compression by default and decodes compressed streams.
 - Parses SSE according to the WHATWG EventSource format.
 - Writes only event payload (`data`) to stdout by default.
 - Writes diagnostics and errors to stderr.
@@ -149,6 +150,12 @@ When UDP/QUIC is blocked or the server does not support HTTP/3, fallback may
 add connection delay before the stream starts. If the configured HTTP transport
 uses a proxy, HTTP/3 is skipped because the QUIC transport does not use that
 proxy.
+
+## Compression
+
+By default `ssecat` sends `Accept-Encoding: gzip, zstd` and decodes `gzip` and `zstd` responses as they stream. Other encodings (for example `br` or `deflate`) are not supported and fail with an error. A header set with `--header 'Accept-Encoding: ...'` replaces the default; use `identity` to disable compression.
+
+Compressed SSE is only incremental if the server flushes after each event. Decoding is tested against [Caddy](https://caddyserver.com/) using `encode gzip zstd` (see `pkg/client/caddy_test.go`, run in CI); other servers and proxies are not tested, and some, such as NGINX by default, do not compress `text/event-stream`.
 
 ## XDG directories
 

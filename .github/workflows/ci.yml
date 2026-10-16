@@ -39,3 +39,32 @@ jobs:
 
       - name: go build
         run: go build ./...
+
+  caddy:
+    name: caddy compression
+    runs-on: ubuntu-latest
+    env:
+      CADDY_VERSION: '2.11.7'
+      SSECAT_REQUIRE_CADDY: '1'
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+
+      - name: Install Caddy
+        run: |
+          set -euo pipefail
+          base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
+          archive="caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -O "${base}/${archive}" -O "${base}/caddy_${CADDY_VERSION}_checksums.txt"
+          grep " ${archive}\$" "caddy_${CADDY_VERSION}_checksums.txt" | sha512sum -c -
+          mkdir -p "${RUNNER_TEMP}/caddy"
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}/caddy" caddy
+          echo "${RUNNER_TEMP}/caddy" >> "${GITHUB_PATH}"
+
+      - name: Test compressed SSE through Caddy
+        run: |
+          caddy version
+          go test ./pkg/client -run 'TestCaddyCompressedStreams' -count=1 -v
