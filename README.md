@@ -19,7 +19,7 @@
 go install github.com/flaviomartins/ssecat/cmd/ssecat@latest
 ```
 
-Building from source requires Go 1.25.0 or newer.
+Building from source requires Go 1.27.0 or newer.
 
 ### From release artifacts
 
