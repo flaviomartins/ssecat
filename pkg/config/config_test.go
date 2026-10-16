@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultFileConfigDisablesResume(t *testing.T) {
@@ -88,5 +89,29 @@ func TestLoadRejectsLegacyResumeKey(t *testing.T) {
 	}
 	if got, want := err.Error(), `unknown config key "resume"`; !strings.Contains(got, want) {
 		t.Fatalf("Load() error = %q, want to contain %q", got, want)
+	}
+}
+
+func TestIdleTimeoutConfig(t *testing.T) {
+	t.Parallel()
+	if got := DefaultFileConfig().IdleTimeout; got != 60*time.Second {
+		t.Fatalf("default = %v, want 60s", got)
+	}
+	for in, want := range map[string]time.Duration{"idle-timeout=15s\n": 15 * time.Second, "idle-timeout=0\n": 0} {
+		path := filepath.Join(t.TempDir(), ".ssecatrc")
+		if err := os.WriteFile(path, []byte(in), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := Load(path)
+		if err != nil || cfg.IdleTimeout != want {
+			t.Fatalf("Load(%q) = %v, %v; want %v", in, cfg.IdleTimeout, err, want)
+		}
+	}
+	for _, in := range []string{"idle-timeout=-1s\n", "idle-timeout=abc\n"} {
+		path := filepath.Join(t.TempDir(), ".ssecatrc")
+		_ = os.WriteFile(path, []byte(in), 0o600)
+		if _, err := Load(path); err == nil {
+			t.Fatalf("Load(%q) succeeded, want error", in)
+		}
 	}
 }

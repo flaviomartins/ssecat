@@ -13,12 +13,13 @@ import (
 
 // FileConfig stores supported .ssecatrc options.
 type FileConfig struct {
-	Retry      bool
-	RetryDelay time.Duration
-	Resume     bool
-	HTTP3      bool
-	UserAgent  string
-	Accept     string
+	Retry       bool
+	RetryDelay  time.Duration
+	Resume      bool
+	IdleTimeout time.Duration
+	HTTP3       bool
+	UserAgent   string
+	Accept      string
 }
 
 // DefaultPath returns the default configuration file path.
@@ -33,12 +34,13 @@ func DefaultPath() (string, error) {
 // DefaultFileConfig returns defaults for configuration values.
 func DefaultFileConfig() FileConfig {
 	return FileConfig{
-		Retry:      true,
-		RetryDelay: 3 * time.Second,
-		Resume:     false,
-		HTTP3:      true,
-		UserAgent:  "ssecat/0.1",
-		Accept:     "text/event-stream",
+		Retry:       true,
+		RetryDelay:  3 * time.Second,
+		Resume:      false,
+		IdleTimeout: 60 * time.Second,
+		HTTP3:       true,
+		UserAgent:   "ssecat/0.1",
+		Accept:      "text/event-stream",
 	}
 }
 
@@ -85,6 +87,15 @@ func Load(path string) (FileConfig, error) {
 				return cfg, fmt.Errorf("parse retry-delay on line %d: %w", lineNo, err)
 			}
 			cfg.RetryDelay = d
+		case "idle-timeout":
+			d, err := time.ParseDuration(value)
+			if err != nil {
+				return cfg, fmt.Errorf("parse idle-timeout on line %d: %w", lineNo, err)
+			}
+			if d < 0 {
+				return cfg, fmt.Errorf("parse idle-timeout on line %d: must not be negative", lineNo)
+			}
+			cfg.IdleTimeout = d
 		case "continue":
 			parsed, err := parseBool(value)
 			if err != nil {

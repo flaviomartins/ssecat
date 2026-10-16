@@ -52,6 +52,7 @@ func run() error {
 		showVer       = fs.Bool("version", false, "show version")
 		http3Flag     = fs.Bool("http3", false, "prefer HTTP/3, falling back to HTTP/1.1 or HTTP/2")
 		noHTTP3Flag   = fs.Bool("no-http3", false, "disable HTTP/3 preference")
+		idleTimeout   = fs.Duration("idle-timeout", 0, "reconnect if no data arrives for this long (0 disables; default 60s or config)")
 		headers       headerFlags
 	)
 	fs.Var(&headers, "header", "extra request header in 'Name: Value' form (repeatable)")
@@ -96,6 +97,11 @@ func run() error {
 	resume := fileCfg.Resume || *continueFlag || *continueShort
 	preferHTTP3 := (fileCfg.HTTP3 || *http3Flag) && !*noHTTP3Flag
 
+	idle, err := resolveIdleTimeout(fs, fileCfg.IdleTimeout, *idleTimeout)
+	if err != nil {
+		return err
+	}
+
 	hdr := http.Header{}
 	if fileCfg.Accept != "" {
 		hdr.Set("Accept", fileCfg.Accept)
@@ -124,7 +130,7 @@ func run() error {
 		}
 	}
 
-	httpClient := &http.Client{Timeout: 60 * time.Second}
+	httpClient := client.NewHTTPClient()
 	writer := output.NewPayloadWriter(os.Stdout)
 
 	c := client.New(client.Options{
@@ -137,6 +143,7 @@ func run() error {
 		Retry:        fileCfg.Retry,
 		InitialRetry: retryDelay,
 		PreferHTTP3:  preferHTTP3,
+		IdleTimeout:  idle,
 	})
 
 	ctx, stop := signalContext(context.Background())
@@ -146,4 +153,18 @@ func run() error {
 		return err
 	}
 	return nil
+}
+
+// resolveIdleTimeout lets an explicitly set --idle-timeout override the config value.
+func resolveIdleTimeout(fs *flag.FlagSet, cfgValue, flagValue time.Duration) (time.Duration, error) {
+	idle := cfgValue
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "idle-timeout" {
+			idle = flagValue
+		}
+	})
+	if idle < 0 {
+		return 0, errors.New("invalid --idle-timeout: must not be negative")
+	}
+	return idle, nil
 }
