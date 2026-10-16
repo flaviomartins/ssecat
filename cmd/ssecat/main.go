@@ -132,6 +132,7 @@ func run() error {
 		HTTPClient:   httpClient,
 		Headers:      hdr,
 		Writer:       writer,
+		StatusWriter: os.Stderr,
 		State:        st,
 		Retry:        fileCfg.Retry,
 		InitialRetry: retryDelay,
